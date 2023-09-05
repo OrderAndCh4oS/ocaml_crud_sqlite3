@@ -1,0 +1,6 @@
+(executable
+ (public_name ocaml_crud)
+ (name main)
+ (libraries sqlite3 opium ocaml_crud)
+ (preprocess
+  (pps ppx_deriving_yojson)))
