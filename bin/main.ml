@@ -120,9 +120,20 @@ let get_article request =
       Lwt.return (Response.of_json json)
   | [] -> Lwt.return (Response.make ~status:`Not_found ())
 
+let error_logger_middleware handler req =
+  Lwt.catch
+    (fun () -> handler req)
+    (fun ex ->
+      Printf.eprintf "Error: %s\n%!" (Printexc.to_string ex);
+      Lwt.return 
+      @@ Response.of_json ~status:`Internal_server_error 
+      @@ Yojson.Safe.from_string {|{"error": "An internal server error occurred"}|}
+    )
+
 let () =
   create_blog_table db;
   App.empty
+  |> App.middleware (Rock.Middleware.create ~filter:error_logger_middleware ~name:"Error Logger")
   |> App.get "/blog" get_article_list
   |> App.post "/blog" post_article
   |> App.put "/blog/:id" put_article
