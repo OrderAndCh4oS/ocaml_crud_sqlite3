@@ -62,11 +62,11 @@ let insert_article db (article : article) =
       match step stmt with Rc.DONE -> () | _ -> failwith "Failed to insert")
   | _ -> failwith "Failed to bind parameters to the SQL query"
 
-let update_article db (article : stored_article) =
+let update_article db id (article : article) =
   let stmt = prepare db "UPDATE blog SET author=?, content=? WHERE id=?" in
   let authorBind = bind stmt 1 @@ Data.TEXT article.author in
   let contentBind = bind stmt 2 @@ Data.TEXT article.content in
-  let idBind = bind stmt 3 @@ Data.INT article.id in
+  let idBind = bind stmt 3 @@ Data.INT id in
   match (idBind, authorBind, contentBind) with
   | Rc.OK, Rc.OK, Rc.OK -> (
       match step stmt with Rc.DONE -> () | _ -> failwith "Failed to update")
@@ -98,11 +98,12 @@ let post_article request =
 let put_article request =
   let* body = Request.to_json_exn request in
   let article =
-    match stored_article_of_yojson body with
+    match article_of_yojson body with
     | Ok article -> article
     | Error error -> raise (Invalid_argument error)
   in
-  update_article db article;
+  let id = Router.param request "id" |> Int64.of_string in
+  update_article db id article;
   Lwt.return (Response.make ~status:`No_content ())
 
 let delete_article request =
@@ -124,7 +125,7 @@ let () =
   App.empty
   |> App.get "/blog" get_article_list
   |> App.post "/blog" post_article
-  |> App.put "/blog" put_article
+  |> App.put "/blog/:id" put_article
   |> App.delete "/blog/:id" delete_article
   |> App.get "/blog/:id" get_article
   |> App.run_command
