@@ -1,3 +1,4 @@
+open Logs
 open Opium
 open Lwt.Syntax
 open Sqlite3
@@ -59,7 +60,10 @@ let insert_article db (article : article) =
   let contentBind = bind stmt 2 @@ Data.TEXT article.content in
   match (authorBind, contentBind) with
   | Rc.OK, Rc.OK -> (
-      match step stmt with Rc.DONE -> () | _ -> failwith "Failed to insert")
+      match step stmt with 
+      | Rc.DONE -> let id = Sqlite3.last_insert_rowid db in
+          id
+      | _ -> failwith "Failed to insert")
   | _ -> failwith "Failed to bind parameters to the SQL query"
 
 let update_article db id (article : article) =
@@ -83,6 +87,7 @@ let delete_article db id =
 let get_article_list _ =
   let articles = select_article_list db in
   let json = [%to_yojson: stored_article list] articles in
+  Logs.info (fun m -> m "Got all articles");
   Lwt.return (Response.of_json json)
 
 let post_article request =
@@ -92,7 +97,8 @@ let post_article request =
     | Ok article -> article
     | Error error -> raise (Invalid_argument error)
   in
-  insert_article db article;
+  let id = insert_article db article in
+  Logs.info (fun m -> m "Created article with ID %Ld" id);
   Lwt.return (Response.make ~status:`No_content ())
 
 let put_article request =
@@ -103,12 +109,14 @@ let put_article request =
     | Error error -> raise (Invalid_argument error)
   in
   let id = Router.param request "id" |> Int64.of_string in
+  Logs.info (fun m -> m "Updating article with ID %Ld" id);
   update_article db id article;
   Lwt.return (Response.make ~status:`No_content ())
 
 let delete_article request =
   let id = Router.param request "id" |> Int64.of_string in
   delete_article db id;
+  Logs.info (fun m -> m "Deleted article with ID %Ld" id);
   Lwt.return (Response.make ~status:`No_content ())
 
 let get_article request =
@@ -117,20 +125,25 @@ let get_article request =
   match article_list with
   | hd :: _ ->
       let json = [%to_yojson: stored_article] hd in
+      Logs.info (fun m -> m "Got article with ID %Ld" id);
       Lwt.return (Response.of_json json)
-  | [] -> Lwt.return (Response.make ~status:`Not_found ())
+  | [] ->
+          Logs.info (fun m -> m "Not found article with ID %Ld" id);
+          Lwt.return (Response.make ~status:`Not_found ())
 
 let error_logger_middleware handler req =
   Lwt.catch
     (fun () -> handler req)
     (fun ex ->
-      Printf.eprintf "Error: %s\n%!" (Printexc.to_string ex);
+      err (fun msg -> msg "%s" (Printexc.to_string ex));
       Lwt.return 
       @@ Response.of_json ~status:`Internal_server_error 
       @@ Yojson.Safe.from_string {|{"error": "An internal server error occurred"}|}
     )
 
 let () =
+  Logs.set_reporter (Logs.format_reporter ());
+  set_level (Some Info);
   create_blog_table db;
   App.empty
   |> App.middleware (Rock.Middleware.create ~filter:error_logger_middleware ~name:"Error Logger")
